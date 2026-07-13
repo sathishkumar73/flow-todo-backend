@@ -1,0 +1,67 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from app.deps import get_current_user
+from app.schemas.tasks import TaskCreate, TaskUpdate
+from app.services import scoring
+from app.services.db import tasks as db
+
+router = APIRouter()
+
+
+@router.get("")
+async def list_tasks(user: dict = Depends(get_current_user)):
+    user_id: str = user["sub"]
+    tasks = await db.get_tasks(user_id)
+    return {"tasks": tasks}
+
+
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_task(body: TaskCreate, user: dict = Depends(get_current_user)):
+    user_id: str = user["sub"]
+    task = await db.create_task(body.title, user_id)
+    return {"task": task}
+
+
+@router.patch("/{task_id}")
+async def update_task(
+    task_id: int,
+    body: TaskUpdate,
+    user: dict = Depends(get_current_user),
+):
+    user_id: str = user["sub"]
+    existing = await db.get_task(task_id, user_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    new_status = body.status if body.status is not None else existing["status"]
+    new_eisenhower = (
+        body.eisenhower_quadrant
+        if body.eisenhower_quadrant is not None
+        else existing["eisenhower_quadrant"]
+    )
+    new_impact_effort = (
+        body.impact_effort_quadrant
+        if body.impact_effort_quadrant is not None
+        else existing["impact_effort_quadrant"]
+    )
+    new_score = scoring.compute_priority_score(new_eisenhower, new_impact_effort)
+
+    task = await db.update_task(
+        task_id=task_id,
+        user_id=user_id,
+        status=new_status,
+        eisenhower_quadrant=new_eisenhower,
+        impact_effort_quadrant=new_impact_effort,
+        priority_score=new_score,
+    )
+    return {"task": task}
+
+
+@router.delete("/{task_id}", status_code=status.HTTP_200_OK)
+async def delete_task(task_id: int, user: dict = Depends(get_current_user)):
+    user_id: str = user["sub"]
+    existing = await db.get_task(task_id, user_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    await db.delete_task(task_id, user_id)
+    return {"ok": True}
