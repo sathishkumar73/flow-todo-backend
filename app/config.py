@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     outrank_webhook_token: str = ""
     indexnow_api_key: str = ""
 
+    openai_api_key: str = ""
+    enforce_pro_gating: bool = False
+
     class Config:
         env_file = ".env"
 

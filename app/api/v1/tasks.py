@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.deps import get_current_user
 from app.schemas.tasks import TaskCreate, TaskUpdate
-from app.services import scoring
+from app.services import ai_scoring, scoring
 from app.services.db import tasks as db
 
 router = APIRouter()
@@ -18,7 +18,24 @@ async def list_tasks(user: dict = Depends(get_current_user)):
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_task(body: TaskCreate, user: dict = Depends(get_current_user)):
     user_id: str = user["sub"]
-    task = await db.create_task(body.title, user_id)
+
+    ai = await ai_scoring.score_task(body.title)
+    if ai:
+        task = await db.create_task(
+            body.title,
+            user_id,
+            eisenhower_quadrant=ai["eisenhower_quadrant"],
+            impact_effort_quadrant=ai["impact_effort_quadrant"],
+            priority_score=scoring.compute_priority_score(
+                ai["eisenhower_quadrant"], ai["impact_effort_quadrant"]
+            ),
+            ai_rationale=ai["rationale"],
+            duration_minutes=ai["duration_minutes"],
+            due_date=ai["due_date"],
+            ai_scored=True,
+        )
+    else:
+        task = await db.create_task(body.title, user_id)
     return {"task": task}
 
 

@@ -1,11 +1,11 @@
 from app.services.db.core import execute, query, query_one
 
-_SELECT = """
-    SELECT id, title, status, created_at, completed_at,
+_COLUMNS = """id, title, status, created_at, completed_at,
            eisenhower_quadrant, impact_effort_quadrant,
-           priority_score, stack_position
-    FROM tasks
-"""
+           priority_score, stack_position,
+           due_date, duration_minutes, ai_rationale, ai_scored, last_touched_at"""
+
+_SELECT = f"SELECT {_COLUMNS} FROM tasks"
 
 
 async def get_tasks(user_id: str) -> list[dict]:
@@ -22,16 +22,36 @@ async def get_task(task_id: int, user_id: str) -> dict | None:
     )
 
 
-async def create_task(title: str, user_id: str) -> dict:
+async def create_task(
+    title: str,
+    user_id: str,
+    eisenhower_quadrant: str | None = None,
+    impact_effort_quadrant: str | None = None,
+    priority_score: int = 0,
+    ai_rationale: str | None = None,
+    duration_minutes: int | None = None,
+    due_date: str | None = None,
+    ai_scored: bool = False,
+) -> dict:
     return await query_one(
         f"""
-        INSERT INTO tasks (title, status, user_id)
-        VALUES (%s, 'active', %s)
-        RETURNING id, title, status, created_at, completed_at,
-                  eisenhower_quadrant, impact_effort_quadrant,
-                  priority_score, stack_position
+        INSERT INTO tasks (title, status, user_id,
+                           eisenhower_quadrant, impact_effort_quadrant, priority_score,
+                           ai_rationale, duration_minutes, due_date, ai_scored)
+        VALUES (%s, 'active', %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING {_COLUMNS}
         """,
-        (title, user_id),
+        (
+            title,
+            user_id,
+            eisenhower_quadrant,
+            impact_effort_quadrant,
+            priority_score,
+            ai_rationale,
+            duration_minutes,
+            due_date,
+            ai_scored,
+        ),
     )
 
 
@@ -50,15 +70,14 @@ async def update_task(
             eisenhower_quadrant   = %s,
             impact_effort_quadrant = %s,
             priority_score        = %s,
+            last_touched_at       = now(),
             completed_at = CASE
                 WHEN %s = 'done' AND status <> 'done' THEN now()
                 WHEN %s = 'active' THEN NULL
                 ELSE completed_at
             END
         WHERE id = %s AND user_id = %s
-        RETURNING id, title, status, created_at, completed_at,
-                  eisenhower_quadrant, impact_effort_quadrant,
-                  priority_score, stack_position
+        RETURNING {_COLUMNS}
         """,
         (
             status,
