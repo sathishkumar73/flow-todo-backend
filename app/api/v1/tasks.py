@@ -71,6 +71,13 @@ async def triage_task(
     return {"ok": True}
 
 
+@router.get("/completed")
+async def get_completed_tasks(user: dict = Depends(get_current_user)):
+    """Tasks completed today, newest first."""
+    tasks = await db.get_completed_tasks_today(user["sub"])
+    return {"tasks": tasks}
+
+
 @router.post("/{task_id}/promote")
 async def promote_task(task_id: int, user: dict = Depends(get_current_user)):
     """Move a backlog task to the top of the stack so it enters the focus list."""

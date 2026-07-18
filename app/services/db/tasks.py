@@ -129,6 +129,19 @@ async def triage_someday(task_id: int, user_id: str) -> dict | None:
     )
 
 
+async def get_completed_tasks_today(user_id: str) -> list[dict]:
+    return await query(
+        f"""{_SELECT}
+        WHERE user_id = %s
+          AND status = 'done'
+          AND completed_at >= CURRENT_DATE
+        ORDER BY completed_at DESC
+        LIMIT 100
+        """,
+        (user_id,),
+    )
+
+
 async def promote_task(task_id: int, user_id: str) -> dict | None:
     """Move a backlog task to the top of the stack so it enters the focus list."""
     return await query_one(
