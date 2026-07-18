@@ -129,6 +129,24 @@ async def triage_someday(task_id: int, user_id: str) -> dict | None:
     )
 
 
+async def reorder_tasks(ordered_ids: list[int], user_id: str) -> None:
+    """
+    Assign stack_position so that the first id in the list sits at the top.
+    Uses unnest for a single-round-trip bulk update.
+    """
+    n = len(ordered_ids)
+    positions = list(range(n, 0, -1))  # n, n-1, …, 1
+    await execute(
+        """
+        UPDATE tasks
+        SET    stack_position = v.pos
+        FROM   (SELECT unnest(%s::int[]) AS id, unnest(%s::int[]) AS pos) AS v
+        WHERE  tasks.id = v.id AND tasks.user_id = %s
+        """,
+        (ordered_ids, positions, user_id),
+    )
+
+
 async def delete_task(task_id: int, user_id: str) -> None:
     await execute(
         "DELETE FROM tasks WHERE id = %s AND user_id = %s",

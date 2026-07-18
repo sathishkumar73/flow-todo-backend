@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.deps import get_current_user, require_pro
-from app.schemas.tasks import SharpenRequest, TaskCreate, TaskUpdate, TriageRequest
+from app.schemas.tasks import ReorderRequest, SharpenRequest, TaskCreate, TaskUpdate, TriageRequest
 from app.services import ai_scoring, scoring, sharpen
 from app.services.db import tasks as db
 
@@ -68,6 +68,13 @@ async def triage_task(
         task = await db.triage_someday(task_id, user_id)
         return {"task": task}
     await db.delete_task(task_id, user_id)
+    return {"ok": True}
+
+
+@router.post("/reorder")
+async def reorder_tasks(body: ReorderRequest, user: dict = Depends(get_current_user)):
+    """Persist a new drag-and-drop order for stack mode."""
+    await db.reorder_tasks(body.ordered_ids, user["sub"])
     return {"ok": True}
 
 

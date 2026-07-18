@@ -31,6 +31,12 @@ class TriageRequest(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class ReorderRequest(BaseModel):
+    ordered_ids: list[int]
+
+    model_config = {"extra": "forbid"}
+
+
 class SharpenRequest(BaseModel):
     title: str
 
