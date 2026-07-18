@@ -1,6 +1,20 @@
+from datetime import datetime, date
+from decimal import Decimal
+from uuid import UUID
+
 from psycopg.rows import dict_row
 
 from app.services.db.pool import get_pool
+
+
+def _to_json(v):
+    if isinstance(v, UUID):
+        return str(v)
+    if isinstance(v, (datetime, date)):
+        return v.isoformat()
+    if isinstance(v, Decimal):
+        return float(v)
+    return v
 
 
 async def query(sql: str, params: tuple = ()) -> list[dict]:
@@ -8,7 +22,8 @@ async def query(sql: str, params: tuple = ()) -> list[dict]:
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(sql, params)
-            return await cur.fetchall()
+            rows = await cur.fetchall()
+            return [{k: _to_json(v) for k, v in row.items()} for row in rows]
 
 
 async def query_one(sql: str, params: tuple = ()) -> dict | None:
