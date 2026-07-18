@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.api.v1 import tasks, blog
+from app.api.v1 import tasks, blog, briefing
 from app.services.db.pool import open_pool, close_pool
 
 
@@ -32,6 +32,7 @@ app.add_middleware(
 )
 
 app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["tasks"])
+app.include_router(briefing.router, prefix="/api/v1/briefing", tags=["briefing"])
 app.include_router(blog.router, prefix="/api/v1")
 
 

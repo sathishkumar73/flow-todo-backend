@@ -12,6 +12,10 @@ router = APIRouter()
 async def list_tasks(user: dict = Depends(get_current_user)):
     user_id: str = user["sub"]
     tasks = await db.get_tasks(user_id)
+    for t in tasks:
+        t["effective_priority"] = scoring.effective_priority(
+            t["priority_score"], t["due_date"]
+        )
     return {"tasks": tasks}
 
 
