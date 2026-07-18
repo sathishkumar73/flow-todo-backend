@@ -17,9 +17,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Flow Todo API", version="0.1.0", lifespan=lifespan)
 
+_origins = [settings.frontend_url]
+if settings.frontend_url.startswith("https://"):
+    bare = settings.frontend_url[len("https://"):]
+    if not bare.startswith("www."):
+        _origins.append(f"https://www.{bare}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
