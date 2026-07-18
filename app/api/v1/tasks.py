@@ -71,6 +71,17 @@ async def triage_task(
     return {"ok": True}
 
 
+@router.post("/{task_id}/promote")
+async def promote_task(task_id: int, user: dict = Depends(get_current_user)):
+    """Move a backlog task to the top of the stack so it enters the focus list."""
+    user_id: str = user["sub"]
+    existing = await db.get_task(task_id, user_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    task = await db.promote_task(task_id, user_id)
+    return {"task": task}
+
+
 @router.post("/reorder")
 async def reorder_tasks(body: ReorderRequest, user: dict = Depends(get_current_user)):
     """Persist a new drag-and-drop order for stack mode."""

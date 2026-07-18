@@ -129,6 +129,21 @@ async def triage_someday(task_id: int, user_id: str) -> dict | None:
     )
 
 
+async def promote_task(task_id: int, user_id: str) -> dict | None:
+    """Move a backlog task to the top of the stack so it enters the focus list."""
+    return await query_one(
+        f"""
+        UPDATE tasks
+        SET    stack_position = (SELECT COALESCE(MAX(stack_position), 0) + 1
+                                 FROM tasks WHERE user_id = %s),
+               last_touched_at = now()
+        WHERE  id = %s AND user_id = %s
+        RETURNING {_COLUMNS}
+        """,
+        (user_id, task_id, user_id),
+    )
+
+
 async def reorder_tasks(ordered_ids: list[int], user_id: str) -> None:
     """
     Assign stack_position so that the first id in the list sits at the top.
