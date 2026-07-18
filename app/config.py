@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     clerk_secret_key: str = ""
     clerk_jwks_url: str = ""
 
+    outrank_webhook_token: str = ""
+    indexnow_api_key: str = ""
+
     class Config:
         env_file = ".env"
 
