@@ -189,7 +189,7 @@ async def handle_outrank_webhook(request: Request):
                 "featured_image": article.get("image_url"),
                 "thumbnail_url": article.get("image_url"),
                 "tags": tags,
-                "category": tags[0] if tags else "general",
+                "category": article.get("category") or (tags[0] if tags else "general"),
                 "seo_title": (article.get("title") or "")[:60],
                 "seo_description": (article.get("meta_description") or "")[:160],
                 "published": True,
