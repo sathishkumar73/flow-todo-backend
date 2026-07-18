@@ -23,3 +23,15 @@ class TaskUpdate(BaseModel):
     impact_effort_quadrant: ImpactEffortQuadrant | None = None
 
     model_config = {"extra": "forbid"}
+
+
+class SharpenRequest(BaseModel):
+    title: str
+
+    @field_validator("title")
+    @classmethod
+    def title_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Title cannot be empty")
+        return v

@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.deps import get_current_user
-from app.schemas.tasks import TaskCreate, TaskUpdate
-from app.services import ai_scoring, scoring
+from app.schemas.tasks import SharpenRequest, TaskCreate, TaskUpdate
+from app.services import ai_scoring, scoring, sharpen
 from app.services.db import tasks as db
 
 router = APIRouter()
@@ -37,6 +37,17 @@ async def create_task(body: TaskCreate, user: dict = Depends(get_current_user)):
     else:
         task = await db.create_task(body.title, user_id)
     return {"task": task}
+
+
+@router.post("/sharpen")
+async def sharpen_endpoint(body: SharpenRequest, user: dict = Depends(get_current_user)):
+    suggestion = await sharpen.sharpen_task(body.title)
+    if suggestion is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Sharpen is temporarily unavailable",
+        )
+    return {"suggestion": suggestion}
 
 
 @router.patch("/{task_id}")
