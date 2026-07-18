@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.deps import get_current_user
+from app.deps import get_current_user, require_pro
 from app.schemas.tasks import SharpenRequest, TaskCreate, TaskUpdate, TriageRequest
 from app.services import ai_scoring, scoring, sharpen
 from app.services.db import tasks as db
@@ -44,7 +44,7 @@ async def create_task(body: TaskCreate, user: dict = Depends(get_current_user)):
 
 
 @router.get("/triage")
-async def get_triage(user: dict = Depends(get_current_user)):
+async def get_triage(user: dict = Depends(require_pro)):
     """Tasks untouched for 14+ days — candidates for the Weekly Triage flow."""
     stale = await db.get_stale_tasks(user["sub"])
     return {"tasks": stale}
@@ -54,7 +54,7 @@ async def get_triage(user: dict = Depends(get_current_user)):
 async def triage_task(
     task_id: int,
     body: TriageRequest,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_pro),
 ):
     user_id: str = user["sub"]
     existing = await db.get_task(task_id, user_id)
@@ -72,7 +72,7 @@ async def triage_task(
 
 
 @router.post("/sharpen")
-async def sharpen_endpoint(body: SharpenRequest, user: dict = Depends(get_current_user)):
+async def sharpen_endpoint(body: SharpenRequest, user: dict = Depends(require_pro)):
     suggestion = await sharpen.sharpen_task(body.title)
     if suggestion is None:
         raise HTTPException(
