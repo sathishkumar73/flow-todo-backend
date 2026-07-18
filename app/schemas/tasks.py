@@ -25,6 +25,12 @@ class TaskUpdate(BaseModel):
     model_config = {"extra": "forbid"}
 
 
+class TriageRequest(BaseModel):
+    action: Literal["do_this_week", "someday", "delete"]
+
+    model_config = {"extra": "forbid"}
+
+
 class SharpenRequest(BaseModel):
     title: str
 

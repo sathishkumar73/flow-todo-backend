@@ -92,6 +92,43 @@ async def update_task(
     )
 
 
+async def get_stale_tasks(user_id: str, days: int = 14) -> list[dict]:
+    return await query(
+        f"""{_SELECT}
+        WHERE user_id = %s AND status = 'active'
+          AND last_touched_at < now() - make_interval(days => %s)
+        ORDER BY last_touched_at ASC
+        """,
+        (user_id, days),
+    )
+
+
+async def triage_do_this_week(task_id: int, user_id: str) -> dict | None:
+    # bump to the top of the stack and mark as freshly touched
+    return await query_one(
+        f"""
+        UPDATE tasks
+        SET last_touched_at = now(),
+            stack_position  = nextval(pg_get_serial_sequence('tasks', 'stack_position'))
+        WHERE id = %s AND user_id = %s
+        RETURNING {_COLUMNS}
+        """,
+        (task_id, user_id),
+    )
+
+
+async def triage_someday(task_id: int, user_id: str) -> dict | None:
+    return await query_one(
+        f"""
+        UPDATE tasks
+        SET status = 'someday', last_touched_at = now()
+        WHERE id = %s AND user_id = %s
+        RETURNING {_COLUMNS}
+        """,
+        (task_id, user_id),
+    )
+
+
 async def delete_task(task_id: int, user_id: str) -> None:
     await execute(
         "DELETE FROM tasks WHERE id = %s AND user_id = %s",

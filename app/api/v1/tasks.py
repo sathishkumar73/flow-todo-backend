@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.deps import get_current_user
-from app.schemas.tasks import SharpenRequest, TaskCreate, TaskUpdate
+from app.schemas.tasks import SharpenRequest, TaskCreate, TaskUpdate, TriageRequest
 from app.services import ai_scoring, scoring, sharpen
 from app.services.db import tasks as db
 
@@ -41,6 +41,34 @@ async def create_task(body: TaskCreate, user: dict = Depends(get_current_user)):
     else:
         task = await db.create_task(body.title, user_id)
     return {"task": task}
+
+
+@router.get("/triage")
+async def get_triage(user: dict = Depends(get_current_user)):
+    """Tasks untouched for 14+ days — candidates for the Weekly Triage flow."""
+    stale = await db.get_stale_tasks(user["sub"])
+    return {"tasks": stale}
+
+
+@router.post("/{task_id}/triage")
+async def triage_task(
+    task_id: int,
+    body: TriageRequest,
+    user: dict = Depends(get_current_user),
+):
+    user_id: str = user["sub"]
+    existing = await db.get_task(task_id, user_id)
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    if body.action == "do_this_week":
+        task = await db.triage_do_this_week(task_id, user_id)
+        return {"task": task}
+    if body.action == "someday":
+        task = await db.triage_someday(task_id, user_id)
+        return {"task": task}
+    await db.delete_task(task_id, user_id)
+    return {"ok": True}
 
 
 @router.post("/sharpen")
