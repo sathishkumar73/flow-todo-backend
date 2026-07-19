@@ -112,6 +112,12 @@ async def bulk_create_tasks(body: BulkTaskCreate, user: dict = Depends(get_curre
     return {"tasks": tasks, "count": len(tasks)}
 
 
+@router.get("/stats")
+async def get_stats(user: dict = Depends(get_current_user)):
+    """Dashboard scorecard: counts, category breakdown, 7-day chart, top tasks."""
+    return await db.get_dashboard_stats(user["sub"])
+
+
 @router.get("/completed")
 async def get_completed_tasks(user: dict = Depends(get_current_user)):
     """Tasks completed today, newest first."""

@@ -237,3 +237,74 @@ async def delete_task(task_id: int, user_id: str) -> None:
         "DELETE FROM tasks WHERE id = %s AND user_id = %s",
         (task_id, user_id),
     )
+
+
+async def get_dashboard_stats(user_id: str) -> dict:
+    counts = await query_one(
+        """
+        SELECT
+            (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'active')                                AS active,
+            (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'done'
+             AND completed_at >= CURRENT_DATE)                                                                         AS completed_today,
+            (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'done'
+             AND completed_at >= date_trunc('week', now()))                                                            AS completed_week,
+            (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'someday')                               AS someday,
+            (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'active' AND ai_scored = true)           AS ai_scored
+        """,
+        (user_id, user_id, user_id, user_id, user_id),
+    )
+
+    eis_rows = await query(
+        """
+        SELECT COALESCE(eisenhower_quadrant, 'none') AS q, count(*)::int AS count
+        FROM tasks WHERE user_id = %s AND status = 'active'
+        GROUP BY 1
+        """,
+        (user_id,),
+    )
+
+    ie_rows = await query(
+        """
+        SELECT COALESCE(impact_effort_quadrant, 'none') AS q, count(*)::int AS count
+        FROM tasks WHERE user_id = %s AND status = 'active'
+        GROUP BY 1
+        """,
+        (user_id,),
+    )
+
+    daily_rows = await query(
+        """
+        WITH days AS (
+            SELECT generate_series(CURRENT_DATE - 6, CURRENT_DATE, '1 day'::interval)::date AS day
+        )
+        SELECT d.day::text AS date, COALESCE(c.cnt, 0)::int AS count
+        FROM days d
+        LEFT JOIN (
+            SELECT completed_at::date AS day, count(*)::int AS cnt
+            FROM tasks
+            WHERE user_id = %s AND status = 'done' AND completed_at >= CURRENT_DATE - 6
+            GROUP BY 1
+        ) c ON c.day = d.day
+        ORDER BY 1
+        """,
+        (user_id,),
+    )
+
+    top_rows = await query(
+        """
+        SELECT id, title, priority_score, eisenhower_quadrant, impact_effort_quadrant
+        FROM tasks
+        WHERE user_id = %s AND status = 'active' AND ai_scored = true
+        ORDER BY priority_score DESC
+        LIMIT 5
+        """,
+        (user_id,),
+    )
+
+    return {
+        **counts,
+        "eisenhower": {r["q"]: r["count"] for r in eis_rows},
+        "impact_effort": {r["q"]: r["count"] for r in ie_rows},
+        "daily_completions": daily_rows,
+        "top_tasks": top_rows,
+    }
