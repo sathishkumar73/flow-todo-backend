@@ -23,8 +23,7 @@ async def list_tasks(user: dict = Depends(get_current_user)):
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_task(body: TaskCreate, user: dict = Depends(get_current_user)):
     user_id: str = user["sub"]
-    # Insert immediately so the UI is responsive, then score in background.
-    task = await db.create_task(body.title, user_id)
+    task = await db.create_task(body.title, user_id, focus_today=body.focus_today)
     asyncio.create_task(_score_bulk_background([task], user_id))
     return {"task": task}
 
@@ -43,15 +42,15 @@ async def triage_task(
     user: dict = Depends(require_pro),
 ):
     user_id: str = user["sub"]
-    existing = await db.get_task(task_id, user_id)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-
     if body.action == "do_this_week":
         task = await db.triage_do_this_week(task_id, user_id)
+        if not task:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
         return {"task": task}
     if body.action == "someday":
         task = await db.triage_someday(task_id, user_id)
+        if not task:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
         return {"task": task}
     await db.delete_task(task_id, user_id)
     return {"ok": True}
@@ -97,6 +96,33 @@ async def bulk_create_tasks(body: BulkTaskCreate, user: dict = Depends(get_curre
     return {"tasks": tasks, "count": len(tasks)}
 
 
+@router.get("/today")
+async def get_today_tasks(user: dict = Depends(get_current_user)):
+    """Tasks pinned to today's dump."""
+    tasks = await db.get_today_tasks(user["sub"])
+    for t in tasks:
+        t["effective_priority"] = scoring.effective_priority(t["priority_score"], t["due_date"])
+    return {"tasks": tasks}
+
+
+@router.post("/{task_id}/pin")
+async def pin_task(task_id: int, user: dict = Depends(get_current_user)):
+    """Add a task to today's dump."""
+    task = await db.pin_task_today(task_id, user["sub"])
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return {"task": task}
+
+
+@router.delete("/{task_id}/pin")
+async def unpin_task(task_id: int, user: dict = Depends(get_current_user)):
+    """Remove a task from today's dump (keeps the task, just removes the focus)."""
+    task = await db.unpin_task_today(task_id, user["sub"])
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return {"task": task}
+
+
 @router.get("/stats")
 async def get_stats(user: dict = Depends(get_current_user)):
     """Dashboard scorecard: counts, category breakdown, 7-day chart, top tasks."""
@@ -113,11 +139,9 @@ async def get_completed_tasks(user: dict = Depends(get_current_user)):
 @router.post("/{task_id}/promote")
 async def promote_task(task_id: int, user: dict = Depends(get_current_user)):
     """Move a backlog task to the top of the stack so it enters the focus list."""
-    user_id: str = user["sub"]
-    existing = await db.get_task(task_id, user_id)
-    if not existing:
+    task = await db.promote_task(task_id, user["sub"])
+    if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    task = await db.promote_task(task_id, user_id)
     return {"task": task}
 
 
@@ -146,39 +170,21 @@ async def update_task(
     user: dict = Depends(get_current_user),
 ):
     user_id: str = user["sub"]
-    existing = await db.get_task(task_id, user_id)
-    if not existing:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-
-    new_status = body.status if body.status is not None else existing["status"]
-    new_eisenhower = (
-        body.eisenhower_quadrant
-        if body.eisenhower_quadrant is not None
-        else existing["eisenhower_quadrant"]
-    )
-    new_impact_effort = (
-        body.impact_effort_quadrant
-        if body.impact_effort_quadrant is not None
-        else existing["impact_effort_quadrant"]
-    )
-    new_score = scoring.compute_priority_score(new_eisenhower, new_impact_effort)
-
-    task = await db.update_task(
+    task = await db.update_task_partial(
         task_id=task_id,
         user_id=user_id,
-        status=new_status,
-        eisenhower_quadrant=new_eisenhower,
-        impact_effort_quadrant=new_impact_effort,
-        priority_score=new_score,
+        status=body.status,
+        eisenhower_quadrant=body.eisenhower_quadrant,
+        impact_effort_quadrant=body.impact_effort_quadrant,
     )
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return {"task": task}
 
 
 @router.delete("/{task_id}", status_code=status.HTTP_200_OK)
 async def delete_task(task_id: int, user: dict = Depends(get_current_user)):
-    user_id: str = user["sub"]
-    existing = await db.get_task(task_id, user_id)
-    if not existing:
+    deleted = await db.delete_task(task_id, user["sub"])
+    if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    await db.delete_task(task_id, user_id)
     return {"ok": True}

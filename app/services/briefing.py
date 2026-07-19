@@ -4,6 +4,7 @@ stats-only summary when the LLM is unavailable (fallbacks are not cached, so
 the AI version replaces them once the API is reachable).
 """
 
+import asyncio
 from datetime import datetime, timezone
 
 from app.services import llm, scoring
@@ -24,14 +25,17 @@ emojis, no bullet points. Plain sentences only."""
 async def get_briefing(user_id: str) -> dict:
     today = datetime.now(timezone.utc).date().isoformat()
 
-    cached = await query_one(
-        "SELECT content FROM briefings WHERE user_id = %s AND brief_date = %s",
-        (user_id, today),
+    cached, all_tasks = await asyncio.gather(
+        query_one(
+            "SELECT content FROM briefings WHERE user_id = %s AND brief_date = %s",
+            (user_id, today),
+        ),
+        tasks_db.get_tasks(user_id),
     )
     if cached:
         return {"date": today, "content": cached["content"], "cached": True}
 
-    tasks = await tasks_db.get_tasks(user_id)
+    tasks = all_tasks
     active = [t for t in tasks if t["status"] == "active"]
     if not active:
         return {

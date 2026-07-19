@@ -9,7 +9,7 @@ async def open_pool() -> None:
     global _pool
     _pool = psycopg_pool.AsyncConnectionPool(
         settings.database_url,
-        min_size=1,
+        min_size=5,
         max_size=10,
         open=False,
     )

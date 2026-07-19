@@ -1,9 +1,12 @@
+import asyncio
+
 from app.services.db.core import execute, query, query_one
 
 _COLUMNS = """id, title, status, created_at, completed_at,
            eisenhower_quadrant, impact_effort_quadrant,
            priority_score, stack_position,
-           due_date, duration_minutes, ai_rationale, ai_scored, last_touched_at"""
+           due_date, duration_minutes, ai_rationale, ai_scored, last_touched_at,
+           focus_date"""
 
 _SELECT = f"SELECT {_COLUMNS} FROM tasks"
 
@@ -25,6 +28,7 @@ async def get_task(task_id: int, user_id: str) -> dict | None:
 async def create_task(
     title: str,
     user_id: str,
+    focus_today: bool = False,
     eisenhower_quadrant: str | None = None,
     impact_effort_quadrant: str | None = None,
     priority_score: int = 0,
@@ -37,8 +41,10 @@ async def create_task(
         f"""
         INSERT INTO tasks (title, status, user_id,
                            eisenhower_quadrant, impact_effort_quadrant, priority_score,
-                           ai_rationale, duration_minutes, due_date, ai_scored)
-        VALUES (%s, 'active', %s, %s, %s, %s, %s, %s, %s, %s)
+                           ai_rationale, duration_minutes, due_date, ai_scored,
+                           focus_date)
+        VALUES (%s, 'active', %s, %s, %s, %s, %s, %s, %s, %s,
+                CASE WHEN %s THEN CURRENT_DATE ELSE NULL END)
         RETURNING {_COLUMNS}
         """,
         (
@@ -51,6 +57,7 @@ async def create_task(
             duration_minutes,
             due_date,
             ai_scored,
+            focus_today,
         ),
     )
 
@@ -84,6 +91,60 @@ async def update_task(
             eisenhower_quadrant,
             impact_effort_quadrant,
             priority_score,
+            status,
+            status,
+            task_id,
+            user_id,
+        ),
+    )
+
+
+async def update_task_partial(
+    task_id: int,
+    user_id: str,
+    status: str | None,
+    eisenhower_quadrant: str | None,
+    impact_effort_quadrant: str | None,
+) -> dict | None:
+    """Update only the supplied fields; compute new score inside Postgres."""
+    return await query_one(
+        f"""
+        UPDATE tasks
+        SET status                 = COALESCE(%s, status),
+            eisenhower_quadrant    = COALESCE(%s, eisenhower_quadrant),
+            impact_effort_quadrant = COALESCE(%s, impact_effort_quadrant),
+            priority_score         = (
+                CASE COALESCE(%s, eisenhower_quadrant)
+                  WHEN 'do_first'  THEN 40
+                  WHEN 'schedule'  THEN 30
+                  WHEN 'delegate'  THEN 20
+                  WHEN 'eliminate' THEN 10
+                  ELSE 0
+                END
+                +
+                CASE COALESCE(%s, impact_effort_quadrant)
+                  WHEN 'quick_win'      THEN 40
+                  WHEN 'major_project'  THEN 30
+                  WHEN 'fill_in'        THEN 20
+                  WHEN 'thankless'      THEN 10
+                  ELSE 0
+                END
+            ),
+            last_touched_at        = now(),
+            completed_at = CASE
+                WHEN COALESCE(%s, status) = 'done'   AND status <> 'done' THEN now()
+                WHEN COALESCE(%s, status) = 'active'                      THEN NULL
+                ELSE completed_at
+            END
+        WHERE id = %s AND user_id = %s
+        RETURNING {_COLUMNS}
+        """,
+        (
+            status,
+            eisenhower_quadrant,
+            impact_effort_quadrant,
+            eisenhower_quadrant,
+            impact_effort_quadrant,
             status,
             status,
             task_id,
@@ -232,73 +293,72 @@ async def reorder_tasks(ordered_ids: list[int], user_id: str) -> None:
     )
 
 
-async def delete_task(task_id: int, user_id: str) -> None:
-    await execute(
-        "DELETE FROM tasks WHERE id = %s AND user_id = %s",
+async def delete_task(task_id: int, user_id: str) -> bool:
+    row = await query_one(
+        "DELETE FROM tasks WHERE id = %s AND user_id = %s RETURNING id",
         (task_id, user_id),
     )
+    return row is not None
 
 
 async def get_dashboard_stats(user_id: str) -> dict:
-    counts = await query_one(
-        """
-        SELECT
-            (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'active')                                AS active,
-            (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'done'
-             AND completed_at >= CURRENT_DATE)                                                                         AS completed_today,
-            (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'done'
-             AND completed_at >= date_trunc('week', now()))                                                            AS completed_week,
-            (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'someday')                               AS someday,
-            (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'active' AND ai_scored = true)           AS ai_scored
-        """,
-        (user_id, user_id, user_id, user_id, user_id),
-    )
-
-    eis_rows = await query(
-        """
-        SELECT COALESCE(eisenhower_quadrant, 'none') AS q, count(*)::int AS count
-        FROM tasks WHERE user_id = %s AND status = 'active'
-        GROUP BY 1
-        """,
-        (user_id,),
-    )
-
-    ie_rows = await query(
-        """
-        SELECT COALESCE(impact_effort_quadrant, 'none') AS q, count(*)::int AS count
-        FROM tasks WHERE user_id = %s AND status = 'active'
-        GROUP BY 1
-        """,
-        (user_id,),
-    )
-
-    daily_rows = await query(
-        """
-        WITH days AS (
-            SELECT generate_series(CURRENT_DATE - 6, CURRENT_DATE, '1 day'::interval)::date AS day
-        )
-        SELECT d.day::text AS date, COALESCE(c.cnt, 0)::int AS count
-        FROM days d
-        LEFT JOIN (
-            SELECT completed_at::date AS day, count(*)::int AS cnt
-            FROM tasks
-            WHERE user_id = %s AND status = 'done' AND completed_at >= CURRENT_DATE - 6
+    counts, eis_rows, ie_rows, daily_rows, top_rows = await asyncio.gather(
+        query_one(
+            """
+            SELECT
+                (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'active')                                AS active,
+                (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'done'
+                 AND completed_at >= CURRENT_DATE)                                                                         AS completed_today,
+                (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'done'
+                 AND completed_at >= date_trunc('week', now()))                                                            AS completed_week,
+                (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'someday')                               AS someday,
+                (SELECT count(*)::int FROM tasks WHERE user_id = %s AND status = 'active' AND ai_scored = true)           AS ai_scored
+            """,
+            (user_id, user_id, user_id, user_id, user_id),
+        ),
+        query(
+            """
+            SELECT COALESCE(eisenhower_quadrant, 'none') AS q, count(*)::int AS count
+            FROM tasks WHERE user_id = %s AND status = 'active'
             GROUP BY 1
-        ) c ON c.day = d.day
-        ORDER BY 1
-        """,
-        (user_id,),
-    )
-
-    top_rows = await query(
-        """
-        SELECT id, title, priority_score, eisenhower_quadrant, impact_effort_quadrant
-        FROM tasks
-        WHERE user_id = %s AND status = 'active' AND ai_scored = true
-        ORDER BY priority_score DESC
-        LIMIT 5
-        """,
-        (user_id,),
+            """,
+            (user_id,),
+        ),
+        query(
+            """
+            SELECT COALESCE(impact_effort_quadrant, 'none') AS q, count(*)::int AS count
+            FROM tasks WHERE user_id = %s AND status = 'active'
+            GROUP BY 1
+            """,
+            (user_id,),
+        ),
+        query(
+            """
+            WITH days AS (
+                SELECT generate_series(CURRENT_DATE - 6, CURRENT_DATE, '1 day'::interval)::date AS day
+            )
+            SELECT d.day::text AS date, COALESCE(c.cnt, 0)::int AS count
+            FROM days d
+            LEFT JOIN (
+                SELECT completed_at::date AS day, count(*)::int AS cnt
+                FROM tasks
+                WHERE user_id = %s AND status = 'done' AND completed_at >= CURRENT_DATE - 6
+                GROUP BY 1
+            ) c ON c.day = d.day
+            ORDER BY 1
+            """,
+            (user_id,),
+        ),
+        query(
+            """
+            SELECT id, title, priority_score, eisenhower_quadrant, impact_effort_quadrant
+            FROM tasks
+            WHERE user_id = %s AND status = 'active' AND ai_scored = true
+            ORDER BY priority_score DESC
+            LIMIT 5
+            """,
+            (user_id,),
+        ),
     )
 
     return {
@@ -308,3 +368,25 @@ async def get_dashboard_stats(user_id: str) -> dict:
         "daily_completions": daily_rows,
         "top_tasks": top_rows,
     }
+
+
+async def get_today_tasks(user_id: str) -> list[dict]:
+    """Tasks pinned to today's dump (focus_date = today) that are still active."""
+    return await query(
+        f"{_SELECT} WHERE user_id = %s AND status = 'active' AND focus_date = CURRENT_DATE ORDER BY stack_position DESC",
+        (user_id,),
+    )
+
+
+async def pin_task_today(task_id: int, user_id: str) -> dict | None:
+    return await query_one(
+        f"UPDATE tasks SET focus_date = CURRENT_DATE WHERE id = %s AND user_id = %s RETURNING {_COLUMNS}",
+        (task_id, user_id),
+    )
+
+
+async def unpin_task_today(task_id: int, user_id: str) -> dict | None:
+    return await query_one(
+        f"UPDATE tasks SET focus_date = NULL WHERE id = %s AND user_id = %s RETURNING {_COLUMNS}",
+        (task_id, user_id),
+    )

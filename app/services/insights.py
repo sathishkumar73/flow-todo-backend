@@ -2,6 +2,7 @@
 only phrases the message) and the weekly retrospective (cached per ISO week).
 """
 
+import asyncio
 from datetime import date, datetime, timedelta, timezone
 
 from app.services import llm
@@ -82,58 +83,55 @@ def _week_start(today: date) -> date:
 async def get_retrospective(user_id: str) -> dict:
     today = datetime.now(timezone.utc).date()
     week_start = _week_start(today)
+    ws = week_start.isoformat()
 
-    cached = await query_one(
-        "SELECT content, stats FROM retrospectives WHERE user_id = %s AND week_start = %s",
-        (user_id, week_start.isoformat()),
+    # Run cache check, stats, and top_done all in parallel — discard unused results
+    cached, stats, top_done = await asyncio.gather(
+        query_one(
+            "SELECT content, stats FROM retrospectives WHERE user_id = %s AND week_start = %s",
+            (user_id, ws),
+        ),
+        query_one(
+            """
+            SELECT
+              count(*) FILTER (WHERE completed_at >= %s::timestamptz)              AS completed_this_week,
+              count(*) FILTER (WHERE created_at   >= %s::timestamptz)              AS created_this_week,
+              count(*) FILTER (WHERE completed_at >= %s::timestamptz - interval '7 days'
+                                 AND completed_at <  %s::timestamptz)              AS completed_last_week,
+              count(*) FILTER (WHERE status = 'active')                            AS active_now,
+              count(*) FILTER (WHERE status = 'active'
+                                 AND last_touched_at < now() - interval '14 days') AS stale_now
+            FROM tasks WHERE user_id = %s
+            """,
+            (ws, ws, ws, ws, user_id),
+        ),
+        query_one(
+            """
+            SELECT string_agg(title, '; ') AS titles FROM (
+              SELECT title FROM tasks
+              WHERE user_id = %s AND completed_at >= %s::timestamptz
+              ORDER BY priority_score DESC LIMIT 3
+            ) t
+            """,
+            (user_id, ws),
+        ),
     )
+
     if cached:
         return {
-            "week_start": week_start.isoformat(),
+            "week_start": ws,
             "content": cached["content"],
             "stats": cached["stats"],
             "cached": True,
         }
 
-    stats = await query_one(
-        """
-        SELECT
-          count(*) FILTER (WHERE completed_at >= %s)                          AS completed_this_week,
-          count(*) FILTER (WHERE created_at   >= %s)                          AS created_this_week,
-          count(*) FILTER (WHERE completed_at >= %s - interval '7 days'
-                             AND completed_at <  %s)                          AS completed_last_week,
-          count(*) FILTER (WHERE status = 'active')                           AS active_now,
-          count(*) FILTER (WHERE status = 'active'
-                             AND last_touched_at < now() - interval '14 days') AS stale_now
-        FROM tasks WHERE user_id = %s
-        """,
-        (
-            week_start.isoformat(),
-            week_start.isoformat(),
-            week_start.isoformat(),
-            week_start.isoformat(),
-            user_id,
-        ),
-    )
-
     if (stats["completed_this_week"] or 0) == 0 and (stats["created_this_week"] or 0) == 0:
         return {
-            "week_start": week_start.isoformat(),
+            "week_start": ws,
             "content": "No activity yet this week — your retrospective will appear once you've added or completed tasks.",
             "stats": stats,
             "cached": False,
         }
-
-    top_done = await query_one(
-        """
-        SELECT string_agg(title, '; ') AS titles FROM (
-          SELECT title FROM tasks
-          WHERE user_id = %s AND completed_at >= %s
-          ORDER BY priority_score DESC LIMIT 3
-        ) t
-        """,
-        (user_id, week_start.isoformat()),
-    )
 
     content = await llm.complete_text(
         _RETRO_SYSTEM,
@@ -159,17 +157,17 @@ async def get_retrospective(user_id: str) -> dict:
             ON CONFLICT (user_id, week_start)
             DO UPDATE SET content = EXCLUDED.content, stats = EXCLUDED.stats
             """,
-            (user_id, week_start.isoformat(), content, json.dumps(stats)),
+            (user_id, ws, content, json.dumps(stats)),
         )
         return {
-            "week_start": week_start.isoformat(),
+            "week_start": ws,
             "content": content,
             "stats": stats,
             "cached": False,
         }
 
     return {
-        "week_start": week_start.isoformat(),
+        "week_start": ws,
         "content": (
             f"You completed {stats['completed_this_week']} tasks this week and added "
             f"{stats['created_this_week']}."

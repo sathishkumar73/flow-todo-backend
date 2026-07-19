@@ -77,15 +77,22 @@ async def get_blog_posts(
                 params.extend([f"%{safe}%", f"%{safe}%"])
 
         where = " AND ".join(conditions)
-        total_row = await query_one(f"SELECT COUNT(*) AS count FROM blog_posts WHERE {where}", tuple(params))
-        total_posts = total_row["count"] if total_row else 0
-        total_pages = (total_posts + limit - 1) // limit if total_posts > 0 else 0
         offset = (page - 1) * limit
 
-        posts = await query(
-            f"SELECT * FROM blog_posts WHERE {where} ORDER BY published_at DESC LIMIT %s OFFSET %s",
-            tuple(params + [limit, offset]),
+        _LIST_COLS = (
+            "id, title, slug, excerpt, thumbnail_url, category, tags, featured_image, "
+            "seo_title, seo_description, published, published_at, created_at, updated_at, "
+            "view_count, read_time, author_name, author_avatar, '' AS content"
         )
+        total_row, posts = await asyncio.gather(
+            query_one(f"SELECT COUNT(*) AS count FROM blog_posts WHERE {where}", tuple(params)),
+            query(
+                f"SELECT {_LIST_COLS} FROM blog_posts WHERE {where} ORDER BY published_at DESC LIMIT %s OFFSET %s",
+                tuple(params + [limit, offset]),
+            ),
+        )
+        total_posts = total_row["count"] if total_row else 0
+        total_pages = (total_posts + limit - 1) // limit if total_posts > 0 else 0
         return BlogPostsResponse(posts=posts, total_pages=total_pages, total_posts=total_posts, page=page, limit=limit)
     except Exception as e:
         logger.error(f"get_blog_posts error: {e}")
@@ -126,14 +133,21 @@ async def get_blog_categories():
 @router.get("/posts/{slug}/related", response_model=List[BlogPost])
 async def get_related_posts(slug: str, limit: int = Query(default=3, ge=1, le=10)):
     try:
-        current = await query_one(
-            "SELECT id, category FROM blog_posts WHERE slug = %s AND published = TRUE", (slug,)
+        _LIST_COLS = (
+            "r.id, r.title, r.slug, r.excerpt, r.thumbnail_url, r.category, r.tags, r.featured_image, "
+            "r.seo_title, r.seo_description, r.published, r.published_at, r.created_at, r.updated_at, "
+            "r.view_count, r.read_time, r.author_name, r.author_avatar, '' AS content"
         )
-        if not current:
-            return []
         return await query(
-            "SELECT * FROM blog_posts WHERE published = TRUE AND category = %s AND id != %s ORDER BY published_at DESC LIMIT %s",
-            (current["category"], current["id"], limit),
+            f"""
+            SELECT {_LIST_COLS} FROM blog_posts cur
+            JOIN blog_posts r
+              ON r.category = cur.category AND r.id != cur.id AND r.published = TRUE
+            WHERE cur.slug = %s AND cur.published = TRUE
+            ORDER BY r.published_at DESC
+            LIMIT %s
+            """,
+            (slug, limit),
         )
     except Exception as e:
         logger.error(f"get_related_posts error: {e}")

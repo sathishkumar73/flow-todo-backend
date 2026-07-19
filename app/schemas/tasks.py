@@ -7,6 +7,7 @@ ImpactEffortQuadrant = Literal["quick_win", "major_project", "fill_in", "thankle
 
 class TaskCreate(BaseModel):
     title: str
+    focus_today: bool = False  # if true, pin this task to today's dump on creation
 
     @field_validator("title")
     @classmethod
