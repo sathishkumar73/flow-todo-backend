@@ -1,3 +1,5 @@
+import logging
+import time
 from datetime import datetime, date
 from decimal import Decimal
 from uuid import UUID
@@ -5,6 +7,8 @@ from uuid import UUID
 from psycopg.rows import dict_row
 
 from app.services.db.pool import get_pool
+
+logger = logging.getLogger("flow.db")
 
 
 def _to_json(v):
@@ -17,13 +21,25 @@ def _to_json(v):
     return v
 
 
+def _sql_label(sql: str) -> str:
+    """Return a compact one-line label for logging (first non-blank line, truncated)."""
+    for line in sql.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:72]
+    return sql[:72]
+
+
 async def query(sql: str, params: tuple = ()) -> list[dict]:
     pool = get_pool()
+    t0 = time.perf_counter()
     async with pool.connection() as conn:
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(sql, params)
             rows = await cur.fetchall()
-            return [{k: _to_json(v) for k, v in row.items()} for row in rows]
+    ms = (time.perf_counter() - t0) * 1000
+    logger.info("db.query  %.0fms  rows=%d  | %s", ms, len(rows), _sql_label(sql))
+    return [{k: _to_json(v) for k, v in row.items()} for row in rows]
 
 
 async def query_one(sql: str, params: tuple = ()) -> dict | None:
@@ -33,9 +49,12 @@ async def query_one(sql: str, params: tuple = ()) -> dict | None:
 
 async def execute(sql: str, params: tuple = ()) -> None:
     pool = get_pool()
+    t0 = time.perf_counter()
     async with pool.connection() as conn:
         async with conn.cursor() as cur:
             await cur.execute(sql, params)
+    ms = (time.perf_counter() - t0) * 1000
+    logger.info("db.exec   %.0fms  | %s", ms, _sql_label(sql))
 
 
 async def upsert(table: str, data: dict, conflict: str) -> dict | None:

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     enforce_pro_gating: bool = False
+    log_level: str = "INFO"
 
     class Config:
         env_file = ".env"

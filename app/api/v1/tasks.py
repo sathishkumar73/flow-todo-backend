@@ -23,24 +23,9 @@ async def list_tasks(user: dict = Depends(get_current_user)):
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_task(body: TaskCreate, user: dict = Depends(get_current_user)):
     user_id: str = user["sub"]
-
-    ai = await ai_scoring.score_task(body.title)
-    if ai:
-        task = await db.create_task(
-            body.title,
-            user_id,
-            eisenhower_quadrant=ai["eisenhower_quadrant"],
-            impact_effort_quadrant=ai["impact_effort_quadrant"],
-            priority_score=scoring.compute_priority_score(
-                ai["eisenhower_quadrant"], ai["impact_effort_quadrant"]
-            ),
-            ai_rationale=ai["rationale"],
-            duration_minutes=ai["duration_minutes"],
-            due_date=ai["due_date"],
-            ai_scored=True,
-        )
-    else:
-        task = await db.create_task(body.title, user_id)
+    # Insert immediately so the UI is responsive, then score in background.
+    task = await db.create_task(body.title, user_id)
+    asyncio.create_task(_score_bulk_background([task], user_id))
     return {"task": task}
 
 

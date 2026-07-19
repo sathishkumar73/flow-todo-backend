@@ -6,16 +6,30 @@ fails, callers receive None and the manual flow continues unchanged.
 
 import json
 import logging
+import time
 
 import httpx
 
 from app.config import settings
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("flow.llm")
 
 _API_URL = "https://api.openai.com/v1/chat/completions"
 FAST_MODEL = "gpt-4o-mini"
 SMART_MODEL = "gpt-4o"
+
+# Persistent client — reuses TCP connections across calls (avoids TLS overhead per request)
+_client: httpx.AsyncClient | None = None
+
+
+def get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+        )
+    return _client
 
 
 async def complete_json(
@@ -34,7 +48,7 @@ async def complete_json(
     try:
         return json.loads(text)
     except (json.JSONDecodeError, TypeError):
-        logger.warning("LLM returned non-JSON output")
+        logger.warning("llm  non-JSON response from %s", model)
         return None
 
 
@@ -47,6 +61,7 @@ async def complete_text(
     json_mode: bool = False,
 ) -> str | None:
     if not settings.openai_api_key:
+        logger.warning("llm  OPENAI_API_KEY not set — skipping")
         return None
     payload: dict = {
         "model": model,
@@ -58,15 +73,23 @@ async def complete_text(
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
+
+    t0 = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                _API_URL,
-                headers={"Authorization": f"Bearer {settings.openai_api_key}"},
-                json=payload,
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"]
+        client = get_client()
+        resp = await client.post(
+            _API_URL,
+            headers={"Authorization": f"Bearer {settings.openai_api_key}"},
+            json=payload,
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        ms = (time.perf_counter() - t0) * 1000
+        data = resp.json()
+        tokens = data.get("usage", {}).get("total_tokens", "?")
+        logger.info("llm.call  model=%s  %.0fms  tokens=%s  [ok]", model, ms, tokens)
+        return data["choices"][0]["message"]["content"]
     except Exception as exc:
-        logger.warning("LLM call failed: %s", exc)
+        ms = (time.perf_counter() - t0) * 1000
+        logger.warning("llm.call  model=%s  %.0fms  [err] %s", model, ms, exc)
         return None
