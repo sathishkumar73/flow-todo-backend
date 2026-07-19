@@ -1,4 +1,5 @@
 import asyncio
+from datetime import date, timedelta
 
 from app.services.db.core import execute, query, query_one
 
@@ -368,6 +369,23 @@ async def get_dashboard_stats(user_id: str) -> dict:
         "daily_completions": daily_rows,
         "top_tasks": top_rows,
     }
+
+
+async def get_streak(user_id: str) -> dict:
+    """Consecutive days ending today where user completed at least one task."""
+    rows = await query(
+        "SELECT DISTINCT completed_at::date AS day FROM tasks WHERE user_id=%s AND status='done' ORDER BY day DESC",
+        (user_id,),
+    )
+    days = {r["day"] for r in rows}
+    today = date.today()
+    streak = 0
+    check = today
+    while check in days:
+        streak += 1
+        check = check - timedelta(days=1)
+    last = max(days) if days else None
+    return {"streak": streak, "last_active": str(last) if last else None}
 
 
 async def get_today_tasks(user_id: str) -> list[dict]:

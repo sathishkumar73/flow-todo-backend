@@ -123,6 +123,12 @@ async def unpin_task(task_id: int, user: dict = Depends(get_current_user)):
     return {"task": task}
 
 
+@router.get("/streak")
+async def get_streak(user: dict = Depends(get_current_user)):
+    """Consecutive days the user has completed at least one task."""
+    return await db.get_streak(user["sub"])
+
+
 @router.get("/stats")
 async def get_stats(user: dict = Depends(get_current_user)):
     """Dashboard scorecard: counts, category breakdown, 7-day chart, top tasks."""
