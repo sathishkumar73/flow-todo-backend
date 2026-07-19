@@ -98,11 +98,23 @@ async def bulk_create_tasks(body: BulkTaskCreate, user: dict = Depends(get_curre
 
 @router.get("/today")
 async def get_today_tasks(user: dict = Depends(get_current_user)):
-    """Tasks pinned to today's dump."""
+    """Tasks pinned to today's dump (active + done)."""
     tasks = await db.get_today_tasks(user["sub"])
     for t in tasks:
         t["effective_priority"] = scoring.effective_priority(t["priority_score"], t["due_date"])
     return {"tasks": tasks}
+
+
+@router.get("/today/history")
+async def get_dump_history(user: dict = Depends(get_current_user)):
+    """Past daily dump tasks, grouped by date."""
+    from collections import defaultdict
+    tasks = await db.get_dump_history(user["sub"])
+    grouped: dict[str, list] = defaultdict(list)
+    for t in tasks:
+        grouped[str(t["focus_date"])].append(t)
+    history = [{"date": d, "tasks": ts} for d, ts in sorted(grouped.items(), reverse=True)]
+    return {"history": history}
 
 
 @router.post("/{task_id}/pin")

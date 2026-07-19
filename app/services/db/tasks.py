@@ -389,9 +389,17 @@ async def get_streak(user_id: str) -> dict:
 
 
 async def get_today_tasks(user_id: str) -> list[dict]:
-    """Tasks pinned to today's dump (focus_date = today) that are still active."""
+    """Tasks pinned to today's dump (focus_date = today) — active and done."""
     return await query(
-        f"{_SELECT} WHERE user_id = %s AND status = 'active' AND focus_date = CURRENT_DATE ORDER BY stack_position DESC",
+        f"{_SELECT} WHERE user_id = %s AND focus_date = CURRENT_DATE ORDER BY status ASC, stack_position DESC",
+        (user_id,),
+    )
+
+
+async def get_dump_history(user_id: str) -> list[dict]:
+    """Past daily dump tasks grouped by focus_date, newest first."""
+    return await query(
+        f"{_SELECT} WHERE user_id = %s AND focus_date IS NOT NULL AND focus_date < CURRENT_DATE ORDER BY focus_date DESC, created_at ASC LIMIT 200",
         (user_id,),
     )
 
