@@ -129,6 +129,63 @@ async def triage_someday(task_id: int, user_id: str) -> dict | None:
     )
 
 
+async def get_all_tasks(user_id: str) -> list[dict]:
+    """Active + someday tasks for search/review page."""
+    return await query(
+        f"""{_SELECT}
+        WHERE user_id = %s AND status IN ('active', 'someday')
+        ORDER BY status, stack_position DESC
+        """,
+        (user_id,),
+    )
+
+
+async def create_tasks_bulk(titles: list[str], user_id: str) -> list[dict]:
+    return await query(
+        f"""
+        INSERT INTO tasks (title, status, user_id)
+        SELECT unnest(%s::text[]), 'active', %s
+        RETURNING {_COLUMNS}
+        """,
+        (titles, user_id),
+    )
+
+
+async def apply_ai_score(
+    task_id: int,
+    user_id: str,
+    eisenhower_quadrant: str | None,
+    impact_effort_quadrant: str | None,
+    priority_score: int,
+    ai_rationale: str | None,
+    duration_minutes: int | None,
+    due_date: str | None,
+) -> None:
+    await execute(
+        """
+        UPDATE tasks
+        SET eisenhower_quadrant    = %s,
+            impact_effort_quadrant = %s,
+            priority_score         = %s,
+            ai_rationale           = %s,
+            duration_minutes       = COALESCE(%s, duration_minutes),
+            due_date               = COALESCE(%s, due_date),
+            ai_scored              = true
+        WHERE id = %s AND user_id = %s AND ai_scored = false
+        """,
+        (
+            eisenhower_quadrant,
+            impact_effort_quadrant,
+            priority_score,
+            ai_rationale,
+            duration_minutes,
+            due_date,
+            task_id,
+            user_id,
+        ),
+    )
+
+
 async def get_completed_tasks_today(user_id: str) -> list[dict]:
     return await query(
         f"""{_SELECT}

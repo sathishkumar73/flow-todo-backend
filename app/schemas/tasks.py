@@ -18,7 +18,7 @@ class TaskCreate(BaseModel):
 
 
 class TaskUpdate(BaseModel):
-    status: Literal["active", "done"] | None = None
+    status: Literal["active", "done", "someday"] | None = None
     eisenhower_quadrant: EisenhowerQuadrant | None = None
     impact_effort_quadrant: ImpactEffortQuadrant | None = None
 
@@ -27,6 +27,22 @@ class TaskUpdate(BaseModel):
 
 class TriageRequest(BaseModel):
     action: Literal["do_this_week", "someday", "delete"]
+
+    model_config = {"extra": "forbid"}
+
+
+class BulkTaskCreate(BaseModel):
+    titles: list[str]
+
+    @field_validator("titles")
+    @classmethod
+    def validate_titles(cls, v: list[str]) -> list[str]:
+        cleaned = [t.strip() for t in v if t.strip()]
+        if not cleaned:
+            raise ValueError("No valid titles provided")
+        if len(cleaned) > 200:
+            raise ValueError("Maximum 200 tasks per dump")
+        return cleaned
 
     model_config = {"extra": "forbid"}
 

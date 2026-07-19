@@ -1,7 +1,8 @@
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.deps import get_current_user, require_pro
-from app.schemas.tasks import ReorderRequest, SharpenRequest, TaskCreate, TaskUpdate, TriageRequest
+from app.schemas.tasks import BulkTaskCreate, ReorderRequest, SharpenRequest, TaskCreate, TaskUpdate, TriageRequest
 from app.services import ai_scoring, scoring, sharpen
 from app.services.db import tasks as db
 
@@ -69,6 +70,46 @@ async def triage_task(
         return {"task": task}
     await db.delete_task(task_id, user_id)
     return {"ok": True}
+
+
+async def _score_bulk_background(tasks: list[dict], user_id: str) -> None:
+    """Score each bulk-dumped task individually; best-effort, runs in background."""
+    for task in tasks:
+        try:
+            ai = await ai_scoring.score_task(task["title"])
+            if ai:
+                await db.apply_ai_score(
+                    task_id=task["id"],
+                    user_id=user_id,
+                    eisenhower_quadrant=ai["eisenhower_quadrant"],
+                    impact_effort_quadrant=ai["impact_effort_quadrant"],
+                    priority_score=scoring.compute_priority_score(
+                        ai["eisenhower_quadrant"], ai["impact_effort_quadrant"]
+                    ),
+                    ai_rationale=ai["rationale"],
+                    duration_minutes=ai["duration_minutes"],
+                    due_date=ai["due_date"],
+                )
+        except Exception:
+            pass
+        # small yield so we don't block the event loop for large dumps
+        await asyncio.sleep(0.05)
+
+
+@router.get("/all")
+async def get_all_tasks(user: dict = Depends(get_current_user)):
+    """Active + someday tasks for the search/review screen."""
+    tasks = await db.get_all_tasks(user["sub"])
+    return {"tasks": tasks}
+
+
+@router.post("/bulk", status_code=status.HTTP_201_CREATED)
+async def bulk_create_tasks(body: BulkTaskCreate, user: dict = Depends(get_current_user)):
+    """Brain-dump endpoint: create up to 200 tasks at once, score them in background."""
+    user_id: str = user["sub"]
+    tasks = await db.create_tasks_bulk(body.titles, user_id)
+    asyncio.create_task(_score_bulk_background(tasks, user_id))
+    return {"tasks": tasks, "count": len(tasks)}
 
 
 @router.get("/completed")
